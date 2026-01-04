@@ -1,255 +1,124 @@
-# Secure Vault Authorization System  
-**A Deterministic, Replay-Safe, Two-Contract Fund Security Architecture**
+## Secure Vault Authorization System
 
----
+### **Deterministic, Replay-Safe, Two-Contract Fund Security Architecture**
 
-## Overview
-This project implements a **secure dual-contract vault system** that cleanly separates:
-
-- **Asset Custody** → Managed by `SecureVault`
-- **Authorization & Validation** → Managed by `AuthorizationManager`
-
-Withdrawals are only executed after a **verified, one-time, on-chain authorization**, ensuring deterministic execution, replay protection, and strong trust boundaries.  
-The full environment runs **locally via Docker**, requiring **no public blockchain deployment**.
-
----
-
-## Project Objective
-Modern decentralized systems often split responsibilities across multiple contracts to reduce risk, increase clarity, and prevent privilege concentration.  
-This system demonstrates how to:
-
-- Enforce **one-time authorization**
-- Preserve **correctness under adversarial execution**
-- Prevent **replay & duplicate withdrawals**
-- Maintain **clear responsibility separation**
-- Guarantee **deterministic & observable behavior**
-
----
+A robust DeFi-inspired security architecture that separates asset custody from authorization logic. This system utilizes ECDSA signature verification, tight context binding, and a two-contract delegation model to ensure funds are only moved under verified, one-time-use permissions.
 
 ## System Architecture
 
-### 1️. SecureVault (Custody Contract)
-- Holds native currency (ETH)
-- Accepts deposits from anyone
-- Executes withdrawals **only after external authorization validation**
-- Delegates all permission logic
+The system is split into two distinct logic domains to minimize the attack surface of the custody layer.
 
-### 2️. AuthorizationManager (Permission Authority)
-- Validates **off-chain signed** withdrawal permissions
-- Performs **ECDSA verification**
-- Ensures **authorization can only be used once**
-- Tracks consumed authorizations
+| Component | Responsibility | Key Features |
+| --- | --- | --- |
+| **`SecureVault`** | **Asset Custody** | Holds ETH, manages internal balances, executes transfers. |
+| **`AuthorizationManager`** | **Permission Authority** | ECDSA Verification, Nonce tracking, Replay protection. |
 
-> **Design Principle**  
-> The vault performs **zero cryptographic checks** and **fully trusts** the authorization manager.  
-> This mirrors real-world DeFi protocols where trust boundaries are explicit.
+### Logic Separation
+
+The `SecureVault` performs **zero** cryptographic checks. It relies entirely on the `AuthorizationManager`. This mirrors professional protocol design where the "hot" logic (validation) is decoupled from the "store" (vault).
 
 ---
 
-## 🔏 Authorization Model
+## Security Model
 
-### Bound Authorization Context
-Each withdrawal authorization is tightly scoped to:
-- Vault contract address  
-- Recipient address  
-- Withdrawal amount  
-- Unique nonce  
-- Chain ID  
+### 1. Bound Authorization Context
 
-### Deterministic Hash Construction
-```
+To prevent cross-contract or cross-chain replay attacks, every authorization hash is strictly bound to the following domain:
 
-keccak256(
-vault address,
-recipient address,
-amount,
-nonce,
-chainId
-)
+* **Vault Address:** Prevents a signature for Vault A being used on Vault B.
+* **Recipient Address:** Ensures funds cannot be diverted.
+* **Amount:** Prevents "amount stuffing."
+* **Nonce:** Ensures uniqueness.
+* **Chain ID:** Prevents signatures from being replayed on forks or testnets (e.g., Goerli vs. Mainnet).
 
-```
+### 2. Replay Protection
 
-No authorization can accidentally apply to:
-- Another vault  
-- Another recipient  
-- Another network  
-- Another execution flow  
+The `AuthorizationManager` maintains a mapping of consumed authorization hashes.
+
+1. User submits a signature.
+2. System generates a deterministic `bytes32` hash of the parameters.
+3. System checks if `isConsumed[hash] == true`.
+4. If not, the transaction proceeds and the hash is marked as **true** before the transfer occurs (Protecting against Reentrancy).
 
 ---
 
-## Replay Protection
-- Every authorization hash is stored after use  
-- Reuse immediately reverts  
-- Guarantees **exactly one successful state transition**
+## Getting Started (Local Development)
 
-Prevents:
-- Replay attacks  
-- Duplicate withdrawals  
-- Cross-contract duplication  
-- Multi-call exploitation  
+This project is fully containerized. No global installations of Node.js or Hardhat are required on your host machine.
 
----
+### Prerequisites
 
-## Vault Behavior Guarantees
-- Deposits always succeed  
-- Withdrawals succeed **only with valid authorization**  
-- Internal state updates occur **before value transfer**  
-- Vault balance can never go negative  
-- Unauthorized actors cannot trigger privileged actions  
+* [Docker](https://www.docker.com/get-started)
+* [Docker Compose](https://docs.docker.com/compose/install/)
 
----
+### One-Command Setup
 
-## Initialization Safety
-Both contracts include **one-time initialization guards** to prevent:
-- Re-initialization  
-- Unauthorized signer replacement  
-- Malicious configuration  
-
----
-
-## Observability
-System emits structured events:
-```
-
-Deposit(address from, uint256 amount)
-Withdrawal(address to, uint256 amount)
-AuthorizationConsumed(bytes32 authorizationId)
+```bash
+docker-compose up --build
 
 ```
 
-Failed withdrawals **revert deterministically**.
+**This command automates the following:**
+
+1. Spins up a local Ethereum-compatible node.
+2. Compiles the Solidity smart contracts.
+3. Deploys `AuthorizationManager.sol`.
+4. Deploys `SecureVault.sol` (linked to the manager).
+5. Performs initialization guards.
+6. Outputs contract addresses to the console.
 
 ---
 
-## Repository Structure
-```
+## Project Structure
 
+```text
 /
 ├─ contracts/
-│  ├─ SecureVault.sol
-│  └─ AuthorizationManager.sol
+│  ├─ SecureVault.sol            # Asset custody and execution
+│  └─ AuthorizationManager.sol   # Signature and nonce validation
 ├─ scripts/
-│  └─ deploy.js
+│  └─ deploy.js                  # Deployment and init orchestration
 ├─ tests/
-│  └─ system.spec.js   # Optional but recommended
+│  └─ system.spec.js             # Security and functional test suite
 ├─ docker/
-│  ├─ Dockerfile
-│  └─ entrypoint.sh
-├─ docker-compose.yml
+│  ├─ Dockerfile                 # Environment definition
+│  └─ entrypoint.sh              # Container startup sequence
+├─ docker-compose.yml            # Infrastructure orchestration
 └─ README.md
 
 ```
 
 ---
 
-## Local Execution (Docker)
+## Security Guarantees
 
-### Prerequisites
-- Docker  
-- Docker Compose  
-
-### One-Command Setup
-```
-
-docker-compose up --build
-
-```
-
-This automatically:
-- Starts a local blockchain (Ganache / Hardhat Node)  
-- Compiles contracts  
-- Deploys AuthorizationManager  
-- Deploys SecureVault  
-- Initializes both contracts  
-- Prints deployed contract addresses  
-
-No manual steps required.
+* **Deterministic Execution:** Identical inputs always yield the same authorization hash.
+* **Initialization Safety:** Contracts use a `Locked` state or `initializable` pattern to prevent unauthorized ownership takeovers after deployment.
+* **State Integrity:** Internal state updates (marking a nonce as used) are performed **before** external ETH transfers to mitigate reentrancy risks.
+* **Observability:** All critical actions trigger events (`Deposit`, `Withdrawal`, `AuthorizationConsumed`) for off-chain indexing and auditing.
 
 ---
 
-## Validation & Testing
-Evaluation supports either:
-- Automated tests **OR**
-- A documented manual testing flow
+## Testing Validation
 
-Recommended tests cover:
-- Successful withdrawal  
-- Failed withdrawal  
-- Replay attempt (must revert)  
-- Invalid signature (must revert)  
-- Cross-vault misuse attempt  
-- Incorrect chain ID  
-- Double authorization consumption prevention  
+The system is validated against the following adversarial scenarios:
 
----
-
-## Security Reasoning
-- Vault contains **no cryptographic code**  
-- Authorizations are **explicitly scoped**  
-- One-time authorization enforcement  
-- State updates done **before transferring value**  
-- No assumptions about call ordering  
-- Safe under repeated / composed execution  
-- Deterministic behavior guaranteed  
-
----
-
-## Deployment Output
-Logs display:
-- Network identifier  
-- Deployer address  
-- AuthorizationManager address  
-- SecureVault address  
-
-Easy for evaluators to locate and verify.
-
----
-
-## System Guarantees
-- Deposits accepted reliably  
-- Withdrawals require valid, verified authorization  
-- Each permission usable exactly once  
-- Cross-contract execution safe  
-- No unintended privileged behavior  
-- Fully reproducible environment  
-- Strong observability  
-
----
-
-## Assumptions & Limitations
-- Authorization generation relies on trusted off-chain signer  
-- Only supports native tokens (no ERC20)  
-- No built-in expiration timestamp (extendable)  
-- Requires deterministic hash construction  
+* **Double Spend:** Attempting to use the same signature twice (Must Revert).
+* **Unauthorized Signer:** Using a signature not signed by the registered Authority (Must Revert).
+* **Context Mismatch:** Using a valid signature intended for a different recipient or vault (Must Revert).
+* **Cross-Chain Replay:** Attempting to reuse a signature on a different ChainID (Must Revert).
 
 ---
 
 ## FAQ
-**Q:** Do I need a public blockchain?  
-**A:** No. Everything runs locally.
 
-**Q:** Is a frontend required?  
-**A:** No.
+**Does this require gas for deployment?**
+Only on the local Docker network. No real ETH is required.
 
-**Q:** Can authorization format differ?  
-**A:** Yes, as long as:
-- It is deterministic  
-- It binds context tightly  
-- It enforces one-time usage  
+**How are signatures generated?**
+Signatures are expected to be produced off-chain using ECDSA (secp256k1) via libraries like `ethers.js` or `web3.js`.
 
-**Q:** What if `docker-compose` doesn’t deploy contracts?  
-**A:** System is considered incomplete.
-
-**Q:** Are tests mandatory?  
-**A:** Optional, but strongly recommended.
+**Can I use this for ERC20 tokens?**
+The current implementation focuses on native ETH custody, but the `AuthorizationManager` is designed to be extensible for token-based vaults.
 
 ---
-
-## Summary
-This system demonstrates:
-- Secure dual-contract architecture
-- Explicit trust separation
-- Replay-safe authorization enforcement
-- Deterministic execution
-- Production-grade Web3 reasoning
-- Clean, auditable behavior
